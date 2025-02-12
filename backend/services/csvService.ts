@@ -23,7 +23,7 @@ export function readCsvFile(filePath: string): Promise<IDmc[]> {
         results.push({
           name: data.name || '',
           country: data.country || '',
-          destinations: data.destinations?.split(',').map((s: any) => s.trim()) || [],
+          destinations: data.region?.split(',').map((s: any) => s.trim()) || [],
           email: data.email || '',
           phone: data.phone || '',
           website: data.website || '',

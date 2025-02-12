@@ -14,7 +14,7 @@ const PORT = process.env.PORT || 3001;
 app.use(cors());
 app.use(express.json());
 
-const csvFilePath = path.join(__dirname, 'data', 'dmc_data.csv');
+const csvFilePath = path.join(__dirname, 'data', 'dmcdb.csv');
 const transporter = nodemailer.createTransport({
   host: 'smtp.resend.com',
   secure: true,
@@ -37,12 +37,11 @@ app.get('/api/countries', async (req, res) => {
 });
 
 
-app.post('/api/send-mails', async (req : Request, res : Response) : Promise<any> => {
+app.post('/api/send-mails', async (req: Request, res: Response): Promise<any> => {
   try {
+    const { country, regions, message } = req.body;
 
-    const { country, message } = req.body;
-
-    if (!country || !message) {
+    if (!regions || !Array.isArray(regions) || regions.length === 0 || !message) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
 
@@ -51,39 +50,46 @@ app.post('/api/send-mails', async (req : Request, res : Response) : Promise<any>
       return res.status(404).json({ error: 'No DMC data available' });
     }
 
-    // Filter only those DMCs that match the provided country
-    const docData = allDmcData.filter(dmc => dmc.country.toLowerCase() === country.toLowerCase());
-    if (docData.length === 0) {
-      return res.status(404).json({ error: 'No DMC data found for the given country' });
+    // Filter DMCs based on selected regions (ignoring country)
+    const filteredDmcData = allDmcData.filter(
+      (dmc) =>
+        dmc.destinations &&
+        Array.isArray(dmc.destinations) &&
+        dmc.destinations.some((region: string) => regions.includes(region))
+    );
+
+    if (filteredDmcData.length === 0) {
+      return res.status(404).json({ error: 'No DMC data found for the selected regions' });
     }
 
+    // Store unique emails to avoid duplicates
+    const uniqueEmails = new Map<string, string>(); // Map<email, name>
+    filteredDmcData.forEach((dmc) => {
+      if (dmc.email) {
+        uniqueEmails.set(dmc.email, dmc.name);
+      }
+    });
 
     let successCount = 0;
     let failedCount = 0;
     const results: { email: string; status: string; error?: string }[] = [];
 
-    // Send email to each DMC
+    // Send emails only once per unique email
     await Promise.all(
-      docData.map(async (dmc) => {
-        if (!dmc.email) {
-          failedCount++;
-          results.push({ email: 'No email provided', status: 'failed', error: 'Missing email' });
-          return;
-        }
-        const itinerary = message;
+      Array.from(uniqueEmails.entries()).map(async ([email, name]) => {
         try {
           await transporter.sendMail({
             from: 'Team Fursat ❤ <dmc@fursat.ai>',
-            to: dmc.email,
+            to: email,
             subject: `Inquiry from Fursat.ai`,
-            text: EmailTemplate.generateQuoteRequest(dmc.name, itinerary, country),
+            text: EmailTemplate.generateQuoteRequest(name, message,country ),
           });
 
           successCount++;
-          results.push({ email: dmc.email, status: 'success' });
+          results.push({ email, status: 'success' });
         } catch (error) {
           failedCount++;
-          results.push({ email: dmc.email, status: 'failed', error: (error as Error).message });
+          results.push({ email, status: 'failed', error: (error as Error).message });
         }
       })
     );
@@ -93,6 +99,44 @@ app.post('/api/send-mails', async (req : Request, res : Response) : Promise<any>
     res.status(500).json({ error: (error as Error).message });
   }
 });
+
+app.get('/api/regions', async (req: Request, res: Response): Promise<any> => {
+  try {
+    const { country } = req.query;
+    if (!country || typeof country !== 'string') {
+      return res.status(400).json({ error: 'Country parameter is required' });
+    }
+
+    console.log(`Fetching destinations for country: ${country}`);
+
+    const dmcData = await readCsvFile(csvFilePath);
+
+    // Filter records by country
+    const filteredData = dmcData.filter((d: any) => d.country?.toLowerCase().trim() === country.toLowerCase().trim());
+
+    if (filteredData.length === 0) {
+      return res.status(404).json({ error: 'No data found for the given country' });
+    }
+
+    const destinations: string[] = filteredData
+  .flatMap((d: any) => Array.isArray(d.destinations) ? d.destinations : []) // Ensure it's an array
+  .map(dest => dest.trim()) // Trim each value
+  .filter(dest => dest.length > 0); // Remove empty values
+
+    // Remove duplicates and sort
+    const uniqueDestinations = Array.from(new Set(destinations)).sort();
+
+    if (uniqueDestinations.length === 0) {
+      return res.status(404).json({ error: 'No destinations found for the given country' });
+    }
+
+    res.json(uniqueDestinations);
+  } catch (error) {
+    console.error('Error fetching destinations:', error);
+    res.status(500).json({ error: 'Failed to load destinations' });
+  }
+});
+
 
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
