@@ -179,6 +179,7 @@ export default function Home() {
           >
             {loading ? 'Sending...' : 'Send Emails'}
           </button>
+          {status && <div className="mt-4 p-3 bg-green-50 text-green-700 rounded-md text-sm">{status}</div>}
         </form>
       </div>
     </div>
